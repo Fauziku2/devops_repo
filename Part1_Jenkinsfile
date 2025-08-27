@@ -1,109 +1,49 @@
 pipeline {
-  agent any
-
-  stages {
-    stage('Op-9558696J-S1: Backup and Update QA') {
-      steps {
-        sh '''#!/bin/bash
-        # Remove old QA backup image if exists
-        docker image rm -f qa-bkup-image || true
-
-        # Backup current QA container
-        docker commit 9558696j-qa-svr qa-bkup-image
-
-        # Create necessary directory
-        mkdir -p /tmp/operate/9558696J
-
-        # Ensure /tmp/operate/9558696J is clean and usable
-        puppet resource file /tmp/operate/9558696J ensure=absent force=true
-        puppet resource file /tmp/operate/9558696J ensure=directory
-
-        # Clone repo
-        cd /tmp/operate/9558696J
-        git clone https://github.com/Fauziku2/9558696J-op-repo.git
-
-        # Locate and run the bolt script
-        locate_script='/tmp/operate/9558696J/9558696J-op-repo/9558696J_script'
-        bolt script run $locate_script -t 9558696j-qa-svr.localdomain -u clientadm -p user123 --no-host-key-check --run-as root
-        '''
-        echo 'Op-9558696J-S1: QA web server is backup and updated'
-      }
-    }
-
-    stage('Op-9558696J-S2: curl test on QA') {
-      steps {
-        sh '''#!/bin/bash
-        result=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:32700/index.html)
-        echo "QA curl response: $result"
-        '''
-      }
-    }
-
-    stage('Op-9558696J-S3: Rollout or Rollback?') {
-      steps {
-        script {
-          def decision = input message: 'Proceed to Production deployment or Rollback?', ok: 'Continue',
-                         parameters: [choice(name: 'ACTION', choices: ['Proceed', 'Rollback'], description: 'Choose your next step')]
-          if (decision == 'Rollback') {
-            error("Rollback selected. Stopping pipeline.")
+      agent any
+      stages {
+          stage('One') {
+           steps {
+             echo 'Continue from previous phase: Ready to deploy next environment.'
+           }
           }
-        }
-      }
-    }
-
-    stage('Op-9558696J-S4: Backup and Update Prod') {
-      steps {
-        sh '''#!/bin/bash
-        # Remove old Prod backup image if exists
-        docker image rm -f prod-bkup-image || true
-
-        # Backup current Prod container
-        docker commit 9558696j-prod-svr prod-bkup-image
-
-        # Reuse updated code from QA stage
-        puppet resource file /tmp/operate/9558696J ensure=absent force=true
-        puppet resource file /tmp/operate/9558696J ensure=directory
-        cd /tmp/operate/9558696J
-        git clone https://github.com/Fauziku2/9558696J-op-repo.git
-        locate_script='/tmp/operate/9558696J/9558696J-op-repo/9558696J_script'
-        bolt script run $locate_script -t 9558696j-prod-svr.localdomain -u clientadm -p user123 --no-host-key-check --run-as root
-        '''
-        echo 'Op-9558696J-S4: Prod web server is backup and updated'
-      }
-    }
-
-    stage('Op-9558696J-S5: curl test on Prod') {
-      steps {
-        sh '''#!/bin/bash
-        result=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:32701/index.html)
-        echo "Prod curl response: $result"
-        '''
-      }
-    }
-
-    stage('Op-9558696J-S6: Final rollback decision') {
-      steps {
-        script {
-          def decision = input message: 'Is the Prod version working fine?', ok: 'Continue',
-                         parameters: [choice(name: 'ACTION', choices: ['All Good', 'Rollback'], description: 'Final decision')]
-          if (decision == 'Rollback') {
-            sh '''#!/bin/bash
-            docker stop 9558696j-prod-svr
-            docker rm 9558696j-prod-svr
-            docker run -d -p 32701:80 --name 9558696j-prod-svr qa-bkup-image
-            '''
-            echo 'Op-9558696J-S6: Rollback to QA image done'
-          } else {
-            echo 'Op-9558696J-S6: Production version confirmed successful'
+          stage('Two') {
+           steps {
+             input('Do you want to update to UAT container?')
+           }
           }
-        }
+          stage('Three') {
+           steps {
+                  sh '''#!/bin/bash
+                  puppet resource file /tmp/clone ensure=absent force=true;
+                  puppet resource file /tmp/clone ensure=directory;
+	                cd /tmp/clone;
+	                git clone https://github.com/Fauziku2/devops_repo.git;
+                  targets=puppetclient1.localdomain;
+                  locate_script='/tmp/clone/devops_repo/script_to_run';
+                  bolt script run $locate_script -t $targets -u clientadm -p user123 --no-host-key-check --run-as root;
+                  '''
+                  echo "UAT container updated"
+           }
+          }
+          stage('Four') {
+           steps {
+             input('Do you want to deploy to Production container?')        
+           }
+          }
+          stage('Five') {
+           steps {
+                  sh '''#!/bin/bash
+                  targets=puppetclient2.localdomain;
+                  locate_script='/tmp/clone/devops_repo/script_to_run';
+                  bolt script run $locate_script -t $targets -u clientadm -p user123 --no-host-key-check --run-as root;
+                  '''
+                  echo "Production container updated"
+           }
+          }
+          stage('Completed updating Operation') {
+           steps {
+             echo 'Completed updating to Production Container'
+           }
+          }
       }
-    }
-
-    stage('Op-9558696J-S7: Monitor') {
-      steps {
-        echo 'Op-9558696J-S7: Prod web server is monitored and ready to serve.'
-      }
-    }
-  }
 }
